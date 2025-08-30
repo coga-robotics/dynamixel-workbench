@@ -22,5 +22,6 @@
         seperation_between_wheels: 0.160  <!--default value is set by reference of TB3-->
         radius_of_wheel: 0.033            <!--default value is set by reference of TB3-->
     </rosparam>
+    <remap from="/dynamixel_workbench/joint_states" to="/joint_states"/>
   </node>
 </launch>
