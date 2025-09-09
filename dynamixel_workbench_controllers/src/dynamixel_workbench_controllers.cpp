@@ -736,27 +736,104 @@ void DynamixelController::trajectoryMsgCallback(const trajectory_msgs::JointTraj
   }
 }
 
-bool DynamixelController::dynamixelCommandMsgCallback(dynamixel_workbench_msgs::DynamixelCommand::Request &req,
-                                                      dynamixel_workbench_msgs::DynamixelCommand::Response &res)
+bool DynamixelController::dynamixelCommandMsgCallback(
+    dynamixel_workbench_msgs::DynamixelCommand::Request &req,
+    dynamixel_workbench_msgs::DynamixelCommand::Response &res)
 {
   bool result = false;
-  const char* log;
+  const char* log = NULL;
+  const std::string &cmd = req.command;
 
-  uint8_t id = req.id;
-  std::string item_name = req.addr_name;
-  int32_t value = req.value;
-
-  result = dxl_wb_->itemWrite(id, item_name.c_str(), value, &log);
-  if (result == false)
+  if (cmd == "ping")
   {
-    ROS_ERROR("%s", log);
-    ROS_ERROR("Failed to write value[%d] on items[%s] to Dynamixel[ID : %d]", value, item_name.c_str(), id);
+    // Toolbox has both with/without error param depending on version
+    result = dxl_wb_->ping(req.id, &log);
+  }
+  else if (cmd == "read")
+  {
+    int32_t value = 0;
+    result = dxl_wb_->itemRead(req.id, req.addr_name.c_str(), &value, &log);
+    // Some message definitions only return comm_result; if yours also returns value, set it here.
+    res.comm_result = result;
+    return true;
+  }
+  else if (cmd == "write")
+  {
+    result = dxl_wb_->itemWrite(req.id, req.addr_name.c_str(), req.value, &log);
+  }
+  else if (cmd == "torque")
+  {
+    // value: 0 or 1
+    // Some versions: torque(id, bool onoff); others: torque(id, bool onoff, uint8_t* err)
+    result = dxl_wb_->torque(req.id, (req.value != 0)
+#if !defined(DXL_TOOLBOX_TORQUE_NO_ERR)
+                                                      ,
+                                          &log
+#endif
+    );
+  }
+  else if (cmd == "reboot")
+  {
+    // Optional: keep torque off before reboot (ignore failure if faulted)
+    (void)dxl_wb_->torque(req.id, false
+#if !defined(DXL_TOOLBOX_TORQUE_NO_ERR)
+                                       ,
+                                       &log
+#endif
+    );
+    ROS_WARN("Turned off torque before rebooting ID %d", req.id);
+    result = dxl_wb_->reboot(req.id, &log);
+    ROS_WARN("Rebooted ID %d", req.id);
+
+    while (!result)
+    {
+      // Give the device time to come back before other node threads touch it
+      ros::Duration(1.0).sleep();
+      result = dxl_wb_->reboot(req.id, &log);
+    }
+
+    if(result)
+    {
+      res.comm_result = true;
+      return true;
+    }
   }
 
-  res.comm_result = result;
+  else
+  {
+    ROS_ERROR("[DynamixelCommand] Unknown command '%s'", cmd.c_str());
+    res.comm_result = false;
+    return true;
+  }
 
+  if (!result)
+    ROS_WARN("[DynamixelCommand] id=%u cmd=%s -> log=0x%s\n", req.id, cmd.c_str(), log);
+
+  res.comm_result = result;
   return true;
 }
+
+// bool DynamixelController::dynamixelCommandMsgCallback(dynamixel_workbench_msgs::DynamixelCommand::Request &req,
+//                                                       dynamixel_workbench_msgs::DynamixelCommand::Response &res)
+// {
+//   bool result = false;
+//   const char* log;
+
+//   uint8_t id = req.id;
+//   std::string item_name = req.addr_name;
+//   int32_t value = req.value;
+
+//   result = dxl_wb_->itemWrite(id, item_name.c_str(), value, &log);
+//   if (result == false)
+//   {
+//     ROS_ERROR("%s", log);
+//     ROS_ERROR("Failed to write value[%d] on items[%s] to Dynamixel[ID : %d]", value, item_name.c_str(), id);
+//   }
+
+//   res.comm_result = result;
+
+//   return true;
+// }
 
 int main(int argc, char **argv)
 {
